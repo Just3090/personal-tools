@@ -1,10 +1,13 @@
 import sys
 
-def parse_source_file(filepath):
+def parse_source_file(filepath, skip_tags=False):
     """
     Reads the source file (file1) and extracts all translations
-    into a dictionary. The structure is:
+    into a dictionary.
+    If skip_tags is False, the structure is:
     {tag: (original_english_line, translation_line)}
+    If skip_tags is True, the structure is:
+    {original_english_line: translation_line}
     """
     translations = {}
     
@@ -31,16 +34,20 @@ def parse_source_file(filepath):
             if stripped_line.startswith("#") and not original_text_line:
                 original_text_line = stripped_line
             elif not stripped_line.startswith("#") and stripped_line != "" and original_text_line:
-                translations[current_tag] = (original_text_line, line.rstrip())
+                if skip_tags:
+                    translations[original_text_line] = line.rstrip()
+                else:
+                    translations[current_tag] = (original_text_line, line.rstrip())
                 current_tag = None
                 original_text_line = None
 
     return translations
 
-def patch_target_file(filepath, translations):
+def patch_target_file(filepath, translations, skip_tags=False):
     """
-    Reads the target file (file2) and replaces empty translation lines
-    if the tag and original text match.
+    Reads the target file (file2) and replaces empty translation lines.
+    - If skip_tags is False, it matches using the tag and original text.
+    - If skip_tags is True, it matches using only the original text.
     """
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -69,16 +76,21 @@ def patch_target_file(filepath, translations):
                 output_lines.append(line)
             elif not stripped_line.startswith("#") and stripped_line != "" and not stripped_line.startswith("old ") and not stripped_line.startswith("new "):
                 is_empty_translation = stripped_line == '""' or stripped_line.endswith(' ""')
+                can_replace = False
+                translated_line = ""
 
-                can_replace = (
-                    is_empty_translation and
-                    current_tag in translations and
-                    original_text_in_target and
-                    translations[current_tag][0] == original_text_in_target
-                )
+                if is_empty_translation and original_text_in_target:
+                    if skip_tags:
+                        if original_text_in_target in translations:
+                            can_replace = True
+                            translated_line = translations[original_text_in_target]
+                    else: # Original logic
+                        if (current_tag in translations and
+                                translations[current_tag][0] == original_text_in_target):
+                            can_replace = True
+                            _, translated_line = translations[current_tag]
 
                 if can_replace:
-                    _, translated_line = translations[current_tag]
                     indentation = line[:line.find(stripped_line)]
                     new_line = f"{indentation}{translated_line.strip()}\n"
                     output_lines.append(new_line)
@@ -100,27 +112,31 @@ def patch_target_file(filepath, translations):
         sys.exit(1)
 
 def main():
-    if len(sys.argv) != 3:
-        print("How to use: python parser-rpy-tl-files.py <base_file> <base_file_output>")
-        print("Example: python3 main.py file1.rpy file2.rpy")
+    args = [arg for arg in sys.argv[1:] if not arg.startswith('--')]
+    flags = [arg for arg in sys.argv[1:] if arg.startswith('--')]
+
+    if len(args) != 2:
+        print("How to use: python parser-rpy-tl-files.py [--skip-tags] <base_file> <base_file_output>")
+        print("Example: python3 main.py --skip-tags file1.rpy file2.rpy")
         sys.exit(1)
-        
-    file1_path = sys.argv[1]
-    file2_path = sys.argv[2]
+
+    file1_path, file2_path = args
+    skip_tags = '--skip-tags' in flags
     
-    print(f"Starting the patch process...")
+    mode = "by original text" if skip_tags else "by tag"
+    print(f"Starting the patch process... (mode: {mode})")
     print(f"             Base File:       {file1_path}")
     print(f"  Output Rewrited File:       {file2_path}")
     
-    translations = parse_source_file(file1_path)
+    translations = parse_source_file(file1_path, skip_tags)
     
     if not translations:
-        print("No valid files in the file1. Exiting...")
+        print("No valid translations found in the base file. Exiting...")
         sys.exit(0)
         
     print(f"Found {len(translations)} translations in '{file1_path}'.")
     
-    patch_target_file(file2_path, translations)
+    patch_target_file(file2_path, translations, skip_tags)
     
     print(f"Nice! The file '{file2_path}' has been updated.")
 
